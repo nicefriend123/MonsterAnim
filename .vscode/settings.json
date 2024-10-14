@@ -51,5 +51,5 @@
         "temp/": true,
         "Temp/": true
     },
-    "dotnet.defaultSolution": "MonsterAnimator.sln"
+    "dotnet.defaultSolution": "MonsterAnim.sln"
 }
