@@ -1,4 +1,7 @@
 using System.Collections;
+using System.Threading;
+using System.Threading.Tasks;
+using Unity.VisualScripting;
 using UnityEngine;
 using UnityEngine.AI;
 using Random = UnityEngine.Random;
@@ -30,7 +33,10 @@ public class MonsterController : MonoBehaviour, IDamagable
     private readonly int hashHit = Animator.StringToHash("Hit");
     private readonly int hashDie = Animator.StringToHash("Die");
 
+    private readonly int hashBattleIdle = Animator.StringToHash("battleidle");
+
     private float distance;
+
     private float hp = 100.0f;
     private Vector3 targetPosition; // 몬스터가 이동할 랜덤한 좌표
     private bool battleMode = false;
@@ -55,10 +61,9 @@ public class MonsterController : MonoBehaviour, IDamagable
     {
         while (!isDie)
         {
-            distance = Vector3.Distance(monsterTr.position, playerTr.position);
-            Debug.Log(distance);
-
             if (state == State.DIE) yield break;
+
+            distance = Vector3.Distance(monsterTr.position, playerTr.position);
 
             if (distance <= attackDist)
             {
@@ -66,9 +71,16 @@ public class MonsterController : MonoBehaviour, IDamagable
             }
             else if (distance <= traceDist)
             {
-                state = State.BATTLEIDLE;
-                yield return new WaitForSeconds(2.0f);
-                state = State.RUNNING;
+                if (state != State.RUNNING && state != State.BATTLEIDLE)
+                {
+                    state = State.BATTLEIDLE;
+                    yield return new WaitForSeconds(2.0f);
+                }
+
+                if (state == State.BATTLEIDLE)
+                {
+                    state = State.RUNNING;
+                }
             }
             else
             {
@@ -87,7 +99,7 @@ public class MonsterController : MonoBehaviour, IDamagable
             {
                 case State.IDLE:
                     agent.isStopped = true; // 이동 정지
-                    yield return new WaitForSeconds(3.0f);
+
                     animator.SetBool(hashIsWalking, true);  // Idle 상태 유지
                     targetPosition = GenerateRandomPosition(); // **목적지 생성**
                     state = State.WALKING;  // **Walking 상태로 전환**
@@ -99,7 +111,6 @@ public class MonsterController : MonoBehaviour, IDamagable
                     //animator.SetBool(hashIsWalking, true);  // **걷기 애니메이션 트리거**
                     if (agent.remainingDistance <= agent.stoppingDistance)
                     {
-                        yield return new WaitForSeconds(3.0f);
                         state = State.IDLE;
                         animator.SetBool(hashIsWalking, false);  // Idle로 전환
                     }
@@ -118,7 +129,8 @@ public class MonsterController : MonoBehaviour, IDamagable
 
                 case State.ATTACK:
                     agent.isStopped = true;
-                    animator.SetBool(hashIsAttack, true);  // 공격 애니메이션 트리거
+                    animator.SetBool(hashIsRunning, false);
+                    animator.SetTrigger(hashIsAttack);  // 공격 애니메이션 트리거
                     break;
 
                 case State.DIE:
