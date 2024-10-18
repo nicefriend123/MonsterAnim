@@ -1,0 +1,225 @@
+using System.Collections;
+using System.Threading;
+using System.Threading.Tasks;
+using Unity.VisualScripting;
+using UnityEngine;
+using UnityEngine.AI;
+using Random = UnityEngine.Random;
+
+public class MonsterController : MonoBehaviour, IDamagable
+{
+    public enum State
+    {
+        IDLE, BATTLEIDLE, ATTACK, DIE, WALKING, RUNNING
+    }
+
+    public State state;
+    [SerializeField] private float traceDist = 10.0f;
+    [SerializeField] private float attackDist = 2.0f;
+    public bool isDie = false;
+
+    private Transform playerTr;
+    private Transform monsterTr;
+    private NavMeshAgent agent;
+    private Animator animator;
+    AnimatorStateInfo currentStateInfo;
+
+    private readonly int hashIsWalking = Animator.StringToHash("IsWalking");
+    private readonly int hashIsDetected = Animator.StringToHash("IsDetected");
+    private readonly int hashIsRunning = Animator.StringToHash("IsRunning");
+    private readonly int hashIsAttack = Animator.StringToHash("IsAttack");
+    private readonly int hashHit = Animator.StringToHash("Hit");
+    private readonly int hashDie = Animator.StringToHash("Die");
+
+    private readonly int hashBattleIdle = Animator.StringToHash("battleidle");
+
+    private float distance;
+
+    private float hp = 100.0f;
+    private Vector3 targetPosition; // 몬스터가 이동할 랜덤한 좌표
+    private bool battleMode = false;
+    private float transitionDuration;
+    private Vector3 randomDirection;
+    private float moveInterval = 2.0f;  // 랜덤 방향을 설정하는 주기
+    private float timer = 0.0f;
+
+    void OnEnable()
+    {
+        StartCoroutine(CheckMonsterState());
+        StartCoroutine(MonsterAction());
+    }
+
+    void Awake()
+    {
+        GameObject playerObj = GameObject.FindGameObjectWithTag("PLAYER");
+        playerTr = playerObj.GetComponent<Transform>();
+
+        monsterTr = transform;
+        agent = GetComponent<NavMeshAgent>();
+        animator = GetComponent<Animator>();
+    }
+    Vector3 GenerateRandomXZDirection()
+    {
+        Vector3 randomDirection = new Vector3(
+            Random.Range(-10f, 10f),
+            0,
+            Random.Range(-10f, 10f)
+        ).normalized;
+        return randomDirection;
+    }
+    IEnumerator CheckMonsterState()
+    {
+        while (!isDie)
+        {
+            if (state == State.DIE) yield break;
+
+            distance = Vector3.Distance(monsterTr.position, playerTr.position);
+            Debug.Log("distance" + distance);
+            currentStateInfo = animator.GetCurrentAnimatorStateInfo(0);
+
+            // 1. 플레이어와의 거리가 공격 거리 이내면 공격 상태로 전환
+            if (distance <= attackDist)
+            {
+                state = State.ATTACK;
+            }
+            // 2. 추적 범위 이내에 들어오면 BattleIdle 상태로 전환
+            else if (distance <= traceDist)
+            {
+                // 걷기 애니메이션을 중지하고 BattleIdle 애니메이션 실행
+                animator.SetBool(hashIsWalking, false);  // 기존 걷기 애니메이션 중지
+                animator.SetBool(hashIsRunning, false);  // 달리기 애니메이션 중지
+
+                // BattleIdle 상태로 전환
+                animator.SetBool(hashIsDetected, true);  // BattleIdle 애니메이션 트리거
+                state = State.BATTLEIDLE;
+
+                Debug.Log("state" + state);
+
+                // 일정 시간 대기 후 상태 전환(예: 공격하거나 달리기 시작)
+                yield return new WaitForSeconds(2.0f);
+                state = State.RUNNING;
+            }
+            else
+            {
+                // 걷기 상태에서 일정 시간 걷다가 Idle 상태로 돌아옴
+                if (state == State.WALKING)
+                {
+                    transitionDuration = currentStateInfo.length;
+                    yield return new WaitForSeconds(transitionDuration);
+                    state = State.IDLE;
+                }
+            }
+
+            Debug.Log("CheckMonsterState" + state);
+            yield return new WaitForSeconds(0.3f);
+        }
+    }
+
+    IEnumerator MonsterAction()
+    {
+        while (!isDie)
+        {
+            switch (state)
+            {
+                case State.IDLE:
+                    agent.isStopped = true;
+                    animator.SetBool(hashIsWalking, false);
+
+                    // Idle 상태에서 애니메이션 지속 시간만큼 대기
+                    currentStateInfo = animator.GetCurrentAnimatorStateInfo(0);
+                    float idleDuration = currentStateInfo.length;
+                    Debug.Log("Idle 상태 대기 시간: " + idleDuration);
+                    yield return new WaitForSeconds(idleDuration);
+
+                    // Walking 상태로 전환하여 지속적인 이동을 시작
+                    state = State.WALKING;
+                    break;
+
+                case State.WALKING:
+                    agent.isStopped = false;  // NavMeshAgent 이동 허용
+
+                    // 걷기 애니메이션 활성화
+                    if (!animator.GetBool(hashIsWalking))
+                        animator.SetBool(hashIsWalking, true);
+
+                    // 목표 지점에 도달하면 새로운 랜덤 목적지를 설정
+                    if (!agent.pathPending && agent.remainingDistance <= agent.stoppingDistance)
+                    {
+                        targetPosition = GenerateRandomPosition(); // 새로운 랜덤 좌표 생성
+                        agent.SetDestination(targetPosition);      // 목적지 설정
+                    }
+                    break;
+
+                case State.BATTLEIDLE:
+                    agent.isStopped = true;
+                    animator.SetBool(hashIsDetected, true);
+                    break;
+
+                case State.RUNNING:
+                    agent.isStopped = false;
+                    animator.SetBool(hashIsRunning, true);
+                    agent.SetDestination(playerTr.position);  // 플레이어 추적
+                    break;
+
+                case State.ATTACK:
+                    agent.isStopped = true;
+                    animator.SetBool(hashIsRunning, false);
+                    animator.SetTrigger(hashIsAttack);  // 공격 애니메이션 트리거
+                    break;
+
+                case State.DIE:
+                    isDie = true;
+                    agent.isStopped = true;
+                    animator.SetTrigger(hashDie);  // 죽음 애니메이션 트리거
+                    GetComponent<CapsuleCollider>().enabled = false;
+                    Invoke(nameof(ReturnPool), 3.0f);
+                    break;
+            }
+            yield return new WaitForSeconds(0.3f); // 상태 전환 주기
+        }
+    }
+
+
+    // 랜덤한 좌표를 생성하는 메서드 (IDLE 상태일 때 호출)
+    Vector3 GenerateRandomPosition()
+    {
+        if (state == State.IDLE)
+        {
+            Vector3 randomDirection = new Vector3(
+                Random.Range(-10f, 10f), 0, Random.Range(-10f, 10f)
+            ).normalized;
+        }
+        float randomDistance = Random.Range(5f, 10f); // 5~10미터 사이의 랜덤 거리
+        return monsterTr.position + randomDirection * randomDistance; // 새로운 목적지 반환
+    }
+
+    void LookAtPlayer()
+    {
+        Vector3 directionToPlayer = playerTr.position - monsterTr.position;
+        directionToPlayer.y = 0; // Y축 회전을 방지하기 위해 Y값을 0으로 설정
+        if (directionToPlayer != Vector3.zero)
+        {
+            Quaternion lookRotation = Quaternion.LookRotation(directionToPlayer);
+            monsterTr.rotation = Quaternion.Slerp(monsterTr.rotation, lookRotation, Time.deltaTime * 5f);
+        }
+    }
+
+    void ReturnPool()
+    {
+        hp = 100.0f;
+        isDie = false;
+        state = State.IDLE;
+        GetComponent<CapsuleCollider>().enabled = true;
+        this.gameObject.SetActive(false);
+    }
+
+    public void OnDamaged()
+    {
+        animator.SetTrigger(hashHit);
+        hp -= 20.0f;
+        if (hp <= 0.0f)
+        {
+            state = State.DIE;
+        }
+    }
+}
